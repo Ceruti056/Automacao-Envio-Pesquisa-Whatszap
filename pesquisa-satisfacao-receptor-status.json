@@ -1,0 +1,110 @@
+{
+  "name": "Pesquisa de Satisfação - Receptor de Status (Evolution)",
+  "nodes": [
+    {
+      "parameters": {
+        "content": "RECEPTOR DE STATUS (Evolution API)\n\n1) ATIVE este workflow (botão Active). Sem isso o status não é gravado.\n2) No Evolution Manager > sua instância > Events > Webhook:\n   - Enabled: ligado\n   - URL: https://SEU-N8N/webhook/evolution-status\n   - Webhook by Events: DESLIGADO | Base64: DESLIGADO\n   - Evento marcado: MESSAGES_UPDATE\n3) No workflow principal, preencha n8nWebhookBase (https://SEU-N8N/webhook).\n\nUse sempre a URL de produção (/webhook/), não /webhook-test/.",
+        "height": 330,
+        "width": 480,
+        "color": 4
+      },
+      "name": "Instruções",
+      "type": "n8n-nodes-base.stickyNote",
+      "typeVersion": 1,
+      "position": [
+        -40,
+        -200
+      ],
+      "id": "nota"
+    },
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "evolution-status",
+        "options": {}
+      },
+      "name": "Webhook Evolution (MESSAGES_UPDATE)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        240
+      ],
+      "id": "wh-evento",
+      "webhookId": "a1b2c3d4-0001-4000-8000-evolutionstatus"
+    },
+    {
+      "parameters": {
+        "jsCode": "const RANK  = { ERROR: 0, PENDING: 1, SERVER_ACK: 2, DELIVERY_ACK: 3, READ: 4, PLAYED: 5 };\nconst ALIAS = { SENT: 'SERVER_ACK', DELIVERED: 'DELIVERY_ACK', DELIVERY: 'DELIVERY_ACK' };\nconst NUM   = { 0: 'ERROR', 1: 'PENDING', 2: 'SERVER_ACK', 3: 'DELIVERY_ACK', 4: 'READ', 5: 'PLAYED' };\n\nconst sd = $getWorkflowStaticData('global');\nsd.status = sd.status || {};\nconst agora = new Date().toISOString();\nconst saida = [];\n\nfor (const it of $input.all()) {\n  const body = it.json.body ?? it.json;\n  const lista = Array.isArray(body.data) ? body.data : [body.data];\n  for (const d of lista) {\n    if (!d || typeof d !== 'object') continue;\n    const keyId = d.keyId ?? d.key?.id ?? d.id;            // id da mensagem no WhatsApp\n    if (!keyId) continue;\n    if (d.fromMe === false || d.key?.fromMe === false) continue; // só mensagens enviadas por nós\n\n    let st = d.status ?? d.update?.status;\n    st = typeof st === 'number' ? NUM[st] : String(st ?? '').toUpperCase();\n    st = ALIAS[st] ?? st;\n    if (!(st in RANK)) continue;\n\n    const atual = sd.status[keyId];\n    const novo = (!atual || st === 'ERROR' || RANK[st] >= RANK[atual.status]) ? st : atual.status;\n    sd.status[keyId] = {\n      status: novo,\n      remoteJid: d.remoteJid ?? d.key?.remoteJid ?? atual?.remoteJid ?? '',\n      atualizadoEm: agora,\n      historico: [...(atual?.historico ?? []), `${st}@${agora}`].slice(-8),\n    };\n    saida.push({ json: { keyId: String(keyId), status: novo, recebido: st } });\n  }\n}\n\n// limpeza: mantém só os 1000 mais recentes\nconst chaves = Object.keys(sd.status);\nif (chaves.length > 1500) {\n  chaves.sort((a, b) => (sd.status[a].atualizadoEm < sd.status[b].atualizadoEm ? -1 : 1))\n        .slice(0, chaves.length - 1000).forEach(k => delete sd.status[k]);\n}\nreturn saida;"
+      },
+      "name": "Registrar status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        240
+      ],
+      "id": "registrar"
+    },
+    {
+      "parameters": {
+        "httpMethod": "GET",
+        "path": "evolution-status-consulta",
+        "responseMode": "lastNode",
+        "options": {
+          "responseData": "firstEntryJson"
+        }
+      },
+      "name": "Webhook Consulta (usado pelo fluxo principal)",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "position": [
+        0,
+        460
+      ],
+      "id": "wh-consulta",
+      "webhookId": "a1b2c3d4-0002-4000-8000-evolutionconsulta"
+    },
+    {
+      "parameters": {
+        "jsCode": "const sd = $getWorkflowStaticData('global');\nconst q = $input.first().json.query ?? {};\nconst keyId = String(q.keyId ?? '').trim();\nconst r = (sd.status || {})[keyId];\n\nreturn [{ json: r\n  ? { encontrado: true, keyId, status: r.status, remoteJid: r.remoteJid, atualizadoEm: r.atualizadoEm, historico: r.historico }\n  : { encontrado: false, keyId } }];"
+      },
+      "name": "Buscar status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        260,
+        460
+      ],
+      "id": "buscar"
+    }
+  ],
+  "connections": {
+    "Webhook Evolution (MESSAGES_UPDATE)": {
+      "main": [
+        [
+          {
+            "node": "Registrar status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Webhook Consulta (usado pelo fluxo principal)": {
+      "main": [
+        [
+          {
+            "node": "Buscar status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  }
+}
