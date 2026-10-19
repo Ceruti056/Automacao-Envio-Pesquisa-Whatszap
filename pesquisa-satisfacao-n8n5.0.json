@@ -1,0 +1,755 @@
+{
+  "name": "Pesquisa de Satisfação - Pacientes (Evolution API)",
+  "nodes": [
+    {
+      "parameters": {},
+      "name": "Execução manual",
+      "type": "n8n-nodes-base.manualTrigger",
+      "typeVersion": 1,
+      "position": [
+        0,
+        200
+      ],
+      "id": "manual"
+    },
+    {
+      "parameters": {
+        "rule": {
+          "interval": [
+            {
+              "field": "days",
+              "triggerAtHour": 8
+            }
+          ]
+        }
+      },
+      "name": "Agendamento diário",
+      "type": "n8n-nodes-base.scheduleTrigger",
+      "typeVersion": 1.2,
+      "position": [
+        0,
+        0
+      ],
+      "id": "schedule"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "evolutionUrl",
+              "name": "evolutionUrl",
+              "value": "https://SEU-EVOLUTION.seudominio.com",
+              "type": "string"
+            },
+            {
+              "id": "instanceName",
+              "name": "instanceName",
+              "value": "NOME_DA_INSTANCIA",
+              "type": "string"
+            },
+            {
+              "id": "evolutionApiKey",
+              "name": "evolutionApiKey",
+              "value": "SUA_APIKEY",
+              "type": "string"
+            },
+            {
+              "id": "linkFormulario",
+              "name": "linkFormulario",
+              "value": "",
+              "type": "string"
+            },
+            {
+              "id": "horaInicio",
+              "name": "horaInicio",
+              "value": 9,
+              "type": "number"
+            },
+            {
+              "id": "horaFim",
+              "name": "horaFim",
+              "value": 18,
+              "type": "number"
+            },
+            {
+              "id": "diasMax",
+              "name": "diasMax",
+              "value": 2,
+              "type": "number"
+            },
+            {
+              "id": "intervaloMinSeg",
+              "name": "intervaloMinSeg",
+              "value": 120,
+              "type": "number"
+            },
+            {
+              "id": "intervaloMaxSeg",
+              "name": "intervaloMaxSeg",
+              "value": 420,
+              "type": "number"
+            },
+            {
+              "id": "n8nWebhookBase",
+              "name": "n8nWebhookBase",
+              "value": "https://n8n.oftalmoplus.com.br/webhook",
+              "type": "string"
+            },
+            {
+              "id": "esperaStatusSeg",
+              "name": "esperaStatusSeg",
+              "value": 20,
+              "type": "number"
+            },
+            {
+              "id": "tentativasStatus",
+              "name": "tentativasStatus",
+              "value": 3,
+              "type": "number"
+            },
+            {
+              "id": "modoTeste",
+              "name": "modoTeste",
+              "value": true,
+              "type": "boolean"
+            },
+            {
+              "id": "numeroTeste",
+              "name": "numeroTeste",
+              "value": "5527999999999",
+              "type": "string"
+            },
+            {
+              "id": "limiteTeste",
+              "name": "limiteTeste",
+              "value": 1,
+              "type": "number"
+            },
+            {
+              "id": "diasRetroativos",
+              "name": "diasRetroativos",
+              "value": 3,
+              "type": "number"
+            },
+            {
+              "id": "testeIntervaloSeg",
+              "name": "testeIntervaloSeg",
+              "value": 20,
+              "type": "number"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Config",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        240,
+        100
+      ],
+      "id": "config"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "https://amigobot-api.amigoapp.com.br/attendances",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "Authorization",
+              "value": "Bearer SEU_TOKEN"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Buscar consultas",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        480,
+        100
+      ],
+      "id": "buscar"
+    },
+    {
+      "parameters": {
+        "jsCode": "const cfg = $('Config').first().json;\nconst norm = s => String(s ?? '').normalize('NFD').replace(/[\\u0300-\\u036f]/g, '').toLowerCase().trim();\nconst rand = (a, b) => { if (b < a) b = a; return Math.floor(Math.random() * (b - a + 1)) + a; };\nconst num = (v, def) => { const n = Number(v); return Number.isFinite(n) ? n : def; };\nconst HORA_INI = num(cfg.horaInicio, 9);\nconst HORA_FIM = Math.max(num(cfg.horaFim, 18), HORA_INI + 1);\nconst DIAS_MAX = num(cfg.diasMax, 2);\nconst GAP_MIN = num(cfg.intervaloMinSeg, 120);\nconst GAP_MAX = Math.max(num(cfg.intervaloMaxSeg, 420), GAP_MIN);\nconst TESTE_INT = num(cfg.testeIntervaloSeg, 20);\nconst LIMITE_TESTE = num(cfg.limiteTeste, 1);\nconst DIAS_RETRO = num(cfg.diasRetroativos, 3);\nconst dataDe = r => new Date(r.end_date ?? r.start_date ?? r.arrived ?? NaN);\n\n// ---------- 1) Normaliza a resposta da API (array, {data:[]}, {attendances:[]}) ----------\nlet registros = [];\nfor (const it of $input.all()) {\n  const j = it.json;\n  if (Array.isArray(j)) registros.push(...j);\n  else if (Array.isArray(j.data)) registros.push(...j.data);\n  else if (Array.isArray(j.attendances)) registros.push(...j.attendances);\n  else if (Array.isArray(j.items)) registros.push(...j.items);\n  else registros.push(j);\n}\n\n// ---------- 2) Filtra status \"Finalizado\" e sinônimos ----------\nconst SINONIMOS = ['finalizad', 'conclu', 'realizad', 'atendid', 'encerrad', 'completed', 'finished', 'done', 'closed'];\nconst EXCLUIR   = ['nao ', 'não', 'cancel', 'falt', 'pendente', 'aguard', 'andamento'];\nconst statusDe = r => norm(r?.status?.name ?? r?.status?.label ?? r?.status ?? r?.situacao ?? '');\n\nlet finalizados = registros.filter(r => {\n  // AmigoApp: flags booleanas\n  if (r.canceled === true || r.missed === true) return false;\n  if (typeof r.done === 'boolean') return r.done === true;\n  // fallback: status em texto, caso exista\n  const st = statusDe(r);\n  if (!st) return false;\n  if (EXCLUIR.some(e => st.startsWith(norm(e)) || st.includes(norm(e)))) return false;\n  return SINONIMOS.some(s => st.includes(s));\n});\n\n// ---------- 3) Evita reenvio (guarda IDs já programados) ----------\nconst sd = $getWorkflowStaticData('global');\nsd.enviados = sd.enviados || [];\nsd.ultimaMsg = sd.ultimaMsg ?? -1;\nconst idDe = r => String(r.id ?? r._id ?? r.attendanceId ?? '');\nconst TESTE = cfg.modoTeste === true || String(cfg.modoTeste).toLowerCase() === 'true';\nif (!TESTE) {\n  finalizados = finalizados.filter(r => idDe(r) && !sd.enviados.includes(idDe(r)));\n  if (DIAS_RETRO > 0) finalizados = finalizados.filter(r => { const d = dataDe(r); return !isNaN(d) && (Date.now() - d.getTime()) <= DIAS_RETRO * 86400000; });\n}\nif (TESTE) {\n  finalizados = finalizados.slice(0, LIMITE_TESTE || 1);\n  // sem nenhuma consulta finalizada na API? cria um registro fictício para testar o envio\n  if (!finalizados.length) finalizados = [{ id: 'teste-' + Date.now(), name: 'Teste' }];\n}\n\n// ---------- 4) 10 modelos de mensagem (sorteio sem repetir o anterior) ----------\nconst link = cfg.linkFormulario && cfg.linkFormulario.trim() ? cfg.linkFormulario.trim() : '{{LINK_DO_FORMULARIO}}';\nconst MODELOS = [\n  n => `Olá, ${n}! 😊 Tudo bem? Foi um prazer te atender. Sua opinião é muito importante para nós! Poderia responder nossa pesquisa de satisfação? Leva menos de 2 minutos:\\n\\n${link}`,\n  n => `Oi, ${n}! Esperamos que você esteja bem. Gostaríamos de saber como foi sua experiência na consulta. Pode nos ajudar respondendo esta pesquisa rápida?\\n\\n${link}`,\n  n => `${n}, tudo certo? 👋 Queremos melhorar cada vez mais o nosso atendimento e, para isso, precisamos da sua avaliação. Responda aqui, por favor:\\n\\n${link}`,\n  n => `Olá, ${n}! Agradecemos por confiar no nosso cuidado. 💙 Conte pra gente como foi sua consulta, é rapidinho:\\n\\n${link}`,\n  n => `Oi, ${n}! Passando para saber como foi sua experiência com a gente. Sua resposta nos ajuda a evoluir! Acesse a pesquisa:\\n\\n${link}`,\n  n => `Olá, ${n}, como você está? Sua consulta foi concluída e queremos ouvir você! Que tal avaliar o nosso atendimento? ⭐\\n\\n${link}`,\n  n => `${n}, obrigado(a) por escolher a nossa clínica! 🙏 Poderia dedicar um minutinho para responder nossa pesquisa de satisfação?\\n\\n${link}`,\n  n => `Oi, ${n}! A sua opinião faz toda a diferença para a nossa equipe. Conta pra gente: como foi seu atendimento?\\n\\n${link}`,\n  n => `Olá, ${n}! 😀 Esperamos que tenha gostado do atendimento. Para continuarmos melhorando, responda nossa breve pesquisa:\\n\\n${link}`,\n  n => `${n}, tudo bem? Nosso objetivo é cuidar bem de você, e seu feedback é essencial. Poderia nos avaliar por aqui?\\n\\n${link}`,\n];\nconst sortearModelo = () => {\n  let i; do { i = rand(0, MODELOS.length - 1); } while (i === sd.ultimaMsg && MODELOS.length > 1);\n  sd.ultimaMsg = i; return i;\n};\n\n// ---------- 5) Telefone e nome ----------\nconst nomeDe = r => {\n  const full = r.patient?.name ?? r.paciente?.nome ?? r.patientName ?? r.contact?.name ?? r.customer?.name ?? r.name ?? r.nome ?? 'paciente';\n  const p = String(full).trim().split(/\\s+/)[0];\n  return p.charAt(0).toUpperCase() + p.slice(1).toLowerCase();\n};\nconst telDe = r => {\n  const p = r.patient ?? {};\n  let t = String(p.contact_cellphone ?? p.cellphone ?? p.phone ?? p.contact_phone ?? r.phone ?? r.telefone ?? r.contact?.phone ?? r.whatsapp ?? '').replace(/\\D/g, '');\n  const dial = String(p.contact_cellphone_dial_code ?? '55').replace(/\\D/g, '') || '55';\n  if (t.length === 10 || t.length === 11) t = dial + t;\n  return t;\n};\n\n// ---------- 6) Sorteio de dia/horário + intervalo mínimo entre envios ----------\nconst agora = new Date();\nconst itens = [];\nfor (const r of finalizados) {\n  const numero = TESTE ? String(cfg.numeroTeste).replace(/\\D/g, '') : telDe(r);\n  if (numero.length < 12) continue; // telefone inválido\n  const d = new Date(agora);\n  if (TESTE) {\n    d.setTime(agora.getTime() + (itens.length * TESTE_INT + rand(5, 15)) * 1000);\n  } else {\n    d.setDate(d.getDate() + rand(0, DIAS_MAX));\n    d.setHours(rand(HORA_INI, HORA_FIM - 1), rand(0, 59), rand(0, 59), 0);\n    if (d < agora) d.setTime(agora.getTime() + rand(60, 600) * 1000);\n  }\n  const nome = nomeDe(r);\n  itens.push({ id: idDe(r), nome, numero, dataEnvio: d, mensagem: (TESTE ? '[TESTE] ' : '') + MODELOS[sortearModelo()](nome) });\n}\nitens.sort((a, b) => a.dataEnvio - b.dataEnvio);\n\n// intervalo aleatório mínimo entre um paciente e outro\nfor (let i = 1; i < itens.length && !TESTE; i++) {\n  const gap = rand(GAP_MIN, GAP_MAX) * 1000;\n  if (itens[i].dataEnvio - itens[i - 1].dataEnvio < gap) {\n    itens[i].dataEnvio = new Date(itens[i - 1].dataEnvio.getTime() + gap);\n  }\n}\n\nif (!TESTE) {\n  itens.forEach(i => sd.enviados.push(i.id));\n  sd.enviados = sd.enviados.slice(-5000);\n}\n\nreturn itens.map(i => ({ json: { id: i.id, nome: i.nome, numero: i.numero, mensagem: i.mensagem, sendAt: (isNaN(i.dataEnvio.getTime()) ? new Date(Date.now() + 60000) : i.dataEnvio).toISOString() } }));"
+      },
+      "name": "Filtrar finalizadas + sortear",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        720,
+        100
+      ],
+      "id": "filtrar"
+    },
+    {
+      "parameters": {
+        "batchSize": 1,
+        "options": {}
+      },
+      "name": "Loop Over Items",
+      "type": "n8n-nodes-base.splitInBatches",
+      "typeVersion": 3,
+      "position": [
+        960,
+        100
+      ],
+      "id": "loop"
+    },
+    {
+      "parameters": {
+        "resume": "specificTime",
+        "dateTime": "={{ $json.sendAt }}"
+      },
+      "name": "Aguardar horário sorteado",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1200,
+        200
+      ],
+      "id": "wait1",
+      "webhookId": "wait-horario-sorteado"
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "={{ String($('Config').first().json.evolutionUrl).trim().replace(/[\"'\\s]+/g,'').replace(/\\/+$/,'') }}/message/sendText/{{ encodeURIComponent(String($('Config').first().json.instanceName).trim()) }}",
+        "sendHeaders": true,
+        "headerParameters": {
+          "parameters": [
+            {
+              "name": "apikey",
+              "value": "={{ String($('Config').first().json.evolutionApiKey).trim() }}"
+            }
+          ]
+        },
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={{ JSON.stringify({ number: $json.numero, text: $json.mensagem, delay: 1500, linkPreview: true }) }}",
+        "options": {}
+      },
+      "name": "Enviar mensagem (Evolution API)",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        1440,
+        200
+      ],
+      "id": "enviar",
+      "onError": "continueRegularOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c2",
+              "leftValue": "={{ $json.tentativa < Number($('Config').first().json.tentativasStatus ?? 3) && $json.message_status !== 'ERROR' }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Tentar novamente?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2880,
+        300
+      ],
+      "id": "if-retry"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c0",
+              "leftValue": "={{ !!$json.key?.id }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Envio OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        1680,
+        200
+      ],
+      "id": "if-envio"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "resultado",
+              "name": "resultado",
+              "value": "FALHA",
+              "type": "string"
+            },
+            {
+              "id": "message_status",
+              "name": "message_status",
+              "value": "ERRO_ENVIO",
+              "type": "string"
+            },
+            {
+              "id": "paciente",
+              "name": "paciente",
+              "value": "={{ $('Loop Over Items').first().json.nome }}",
+              "type": "string"
+            },
+            {
+              "id": "erro",
+              "name": "erro",
+              "value": "={{ $json.error?.message ?? $json.message ?? 'resposta sem key.id' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Falha no envio",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        1920,
+        420
+      ],
+      "id": "falha-no-envio"
+    },
+    {
+      "parameters": {
+        "resume": "timeInterval",
+        "amount": "={{ $('Config').first().json.esperaStatusSeg }}",
+        "unit": "seconds"
+      },
+      "name": "Aguardar status",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1.1,
+      "position": [
+        1920,
+        200
+      ],
+      "id": "wait2",
+      "webhookId": "wait-status"
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "={{ String($('Config').first().json.n8nWebhookBase).trim().replace(/[\"'\\s]+/g,'').replace(/\\/+$/,'') }}/evolution-status-consulta",
+        "sendQuery": true,
+        "queryParameters": {
+          "parameters": [
+            {
+              "name": "keyId",
+              "value": "={{ $('Enviar mensagem (Evolution API)').first().json.key?.id }}"
+            }
+          ]
+        },
+        "options": {
+          "timeout": 15000
+        }
+      },
+      "name": "Consultar message_status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4.2,
+      "position": [
+        2160,
+        200
+      ],
+      "id": "consultar",
+      "onError": "continueRegularOutput",
+      "alwaysOutputData": true
+    },
+    {
+      "parameters": {
+        "jsCode": "const RANK = { ERROR: 0, PENDING: 1, SERVER_ACK: 2, DELIVERY_ACK: 3, READ: 4, PLAYED: 5 };\nconst ctx = $('Loop Over Items').first().json;\n\nlet erro = '';\nlet regs = [];\nconst coletar = (o, d = 0) => {\n  if (!o || d > 6) return;\n  if (Array.isArray(o)) { o.forEach(v => coletar(v, d + 1)); return; }\n  if (typeof o !== 'object') return;\n  if (o.error && !o.status) { erro = o.error.message ?? String(o.error); return; }\n  const st = String(o.status ?? o.message_status ?? '').toUpperCase();\n  if (st in RANK) regs.push({ status: st });\n  for (const k of Object.keys(o)) if (o[k] && typeof o[k] === 'object') coletar(o[k], d + 1);\n};\nconst bruto = $input.all().map(i => i.json);\ncoletar(bruto);\n\nconst semConf = !!erro && !regs.length;\nlet melhor = 'PENDING';\nfor (const r of regs) {\n  const s = String(r.status ?? r.message_status ?? '').toUpperCase();\n  if (s in RANK && RANK[s] >= RANK[melhor]) melhor = s;\n}\nif (regs.some(r => String(r.status ?? '').toUpperCase() === 'ERROR')) melhor = 'ERROR';\n\nlet tentativa = 1;\ntry { const prev = $('Interpretar status').first().json; if (prev && prev.id === ctx.id) tentativa = (prev.tentativa || 0) + 1; } catch (e) {}\n\nreturn [{ json: {\n  id: ctx.id, nome: ctx.nome, numero: ctx.numero,\n  message_status: semConf ? 'SEM_CONFIRMACAO' : melhor,\n  erro,\n  tentativa,\n  debug_consulta: JSON.stringify(bruto).slice(0, 400),\n  enviadoOk: !semConf && RANK[melhor] >= RANK.SERVER_ACK,       // chegou nos servidores do WhatsApp\n  entregue: !semConf && RANK[melhor] >= RANK.DELIVERY_ACK,       // entregue/lida\n  verificadoEm: new Date().toISOString(),\n}}];"
+      },
+      "name": "Interpretar status",
+      "type": "n8n-nodes-base.code",
+      "typeVersion": 2,
+      "position": [
+        2400,
+        200
+      ],
+      "id": "interpretar"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "c1",
+              "leftValue": "={{ $json.enviadoOk }}",
+              "rightValue": true,
+              "operator": {
+                "type": "boolean",
+                "operation": "equals"
+              }
+            }
+          ],
+          "combinator": "and"
+        },
+        "options": {}
+      },
+      "name": "Mensagem enviada/recebida?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [
+        2640,
+        200
+      ],
+      "id": "if"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "resultado",
+              "name": "resultado",
+              "value": "SUCESSO",
+              "type": "string"
+            },
+            {
+              "id": "message_status",
+              "name": "message_status",
+              "value": "={{ $json.message_status }}",
+              "type": "string"
+            },
+            {
+              "id": "entregue",
+              "name": "entregue",
+              "value": "={{ $json.entregue }}",
+              "type": "boolean"
+            },
+            {
+              "id": "paciente",
+              "name": "paciente",
+              "value": "={{ $json.nome }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Registrar sucesso",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        2880,
+        120
+      ],
+      "id": "registrar-sucesso"
+    },
+    {
+      "parameters": {
+        "assignments": {
+          "assignments": [
+            {
+              "id": "resultado",
+              "name": "resultado",
+              "value": "={{ ['PENDING', 'SEM_CONFIRMACAO'].includes($json.message_status) ? 'NAO_CONFIRMADO' : 'FALHA' }}",
+              "type": "string"
+            },
+            {
+              "id": "message_status",
+              "name": "message_status",
+              "value": "={{ $json.message_status }}",
+              "type": "string"
+            },
+            {
+              "id": "tentativas",
+              "name": "tentativas",
+              "value": "={{ $json.tentativa }}",
+              "type": "number"
+            },
+            {
+              "id": "debug_consulta",
+              "name": "debug_consulta",
+              "value": "={{ $json.debug_consulta }}",
+              "type": "string"
+            },
+            {
+              "id": "paciente",
+              "name": "paciente",
+              "value": "={{ $json.nome }}",
+              "type": "string"
+            },
+            {
+              "id": "erro",
+              "name": "erro",
+              "value": "={{ $json.erro ?? '' }}",
+              "type": "string"
+            }
+          ]
+        },
+        "options": {}
+      },
+      "name": "Registrar falha",
+      "type": "n8n-nodes-base.set",
+      "typeVersion": 3.4,
+      "position": [
+        3120,
+        400
+      ],
+      "id": "registrar-falha"
+    }
+  ],
+  "connections": {
+    "Execução manual": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Agendamento diário": {
+      "main": [
+        [
+          {
+            "node": "Config",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Config": {
+      "main": [
+        [
+          {
+            "node": "Buscar consultas",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Buscar consultas": {
+      "main": [
+        [
+          {
+            "node": "Filtrar finalizadas + sortear",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Filtrar finalizadas + sortear": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Loop Over Items": {
+      "main": [
+        [],
+        [
+          {
+            "node": "Aguardar horário sorteado",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar horário sorteado": {
+      "main": [
+        [
+          {
+            "node": "Enviar mensagem (Evolution API)",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Enviar mensagem (Evolution API)": {
+      "main": [
+        [
+          {
+            "node": "Envio OK?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Envio OK?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Falha no envio",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Falha no envio": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Aguardar status": {
+      "main": [
+        [
+          {
+            "node": "Consultar message_status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Consultar message_status": {
+      "main": [
+        [
+          {
+            "node": "Interpretar status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Interpretar status": {
+      "main": [
+        [
+          {
+            "node": "Mensagem enviada/recebida?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Mensagem enviada/recebida?": {
+      "main": [
+        [
+          {
+            "node": "Registrar sucesso",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Tentar novamente?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Tentar novamente?": {
+      "main": [
+        [
+          {
+            "node": "Aguardar status",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Registrar falha",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar sucesso": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Registrar falha": {
+      "main": [
+        [
+          {
+            "node": "Loop Over Items",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1",
+    "timezone": "America/Sao_Paulo"
+  }
+}
