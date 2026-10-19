@@ -59,8 +59,6 @@ O projeto conta ainda com um subfluxo receptor de eventos (Webhooks), garantindo
    cd pesquisa-satisfacao-n8n
    ```
 
-````
-
 ---
 
 ## 💡 Como Usar
@@ -90,4 +88,6 @@ Acesse o nó **Config** no fluxo principal do n8n e ajuste os parâmetros confor
 - **Agendada**: O trigger `Agendamento diário` executa automaticamente a rotina todos os dias às 08:00 (ou no horário parametrizado).
 - **Manual**: Clique em **Execute Workflow** no nó `Execução manual` para homologar o funcionamento em tempo real.
 
-````
+```
+
+```
