@@ -1,4 +1,3 @@
-````markdown
 # 📊 Pesquisa de Satisfação - Pacientes
 
 <div align="center">
@@ -59,6 +58,7 @@ O projeto conta ainda com um subfluxo receptor de eventos (Webhooks), garantindo
    git clone [https://github.com/seu-usuario/pesquisa-satisfacao-n8n.git](https://github.com/seu-usuario/pesquisa-satisfacao-n8n.git)
    cd pesquisa-satisfacao-n8n
    ```
+
 ````
 
 ---
@@ -90,14 +90,4 @@ Acesse o nó **Config** no fluxo principal do n8n e ajuste os parâmetros confor
 - **Agendada**: O trigger `Agendamento diário` executa automaticamente a rotina todos os dias às 08:00 (ou no horário parametrizado).
 - **Manual**: Clique em **Execute Workflow** no nó `Execução manual` para homologar o funcionamento em tempo real.
 
----
-
-## 📄 Licença / Autor
-
-Projeto distribuído sob a licença **MIT**.
-
-Desenvolvido por **Gabriel Araujo Ceruti Castro**.
-
-```
-
-```
+````
